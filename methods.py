@@ -1,151 +1,151 @@
-import sklearn.datasets
-from sklearn.preprocessing import StandardScaler
 import numpy as np
+from numpy.typing import NDArray
 from scipy.special import expit
 import matplotlib.pyplot as plt
 
 # functions
-def negative_likelihood(y, X, theta,):
+def negative_log_likelihood(y: NDArray[np.float64],
+                        X: NDArray[np.float64],
+                        theta: NDArray[np.float64]) -> float:
+    """Compute the negative log-likelihood for logistic regression.
+
+    Uses np.logaddexp for numerical stability, avoiding overflow in
+    log(1 + exp(x)).
+
+    Args:
+        y:     Label vector of shape (n,) with values in {-1, +1}.
+        X:     Feature matrix of shape (n, p).
+        theta: Parameter vector of shape (p,).
+
+    Returns:
+        Scalar negative log-likelihood value.
+    """
     return np.sum(np.logaddexp(0, -(y * np.dot(X, theta))))
 
-def objective_function(y, X, theta, gamma, D):
-    return negative_likelihood(y, X, theta) + gamma * 0.5 * (np.linalg.norm(np.dot(D, theta)))**2
+def l2_regularization(theta: NDArray[np.float64],
+                      D: NDArray[np.float64]) -> float:
+    """Compute L2 regularization term.
 
-def gradient_method(y, X, theta, gamma, D):
+    L2 Regularization = (1 / 2) * ||D @ theta||^2
+
+    Args:
+        theta: Parameter vector of shape (p,).
+        D:     Regularization matrix of shape (p, p). Typically the identity
+               with the bias entry zeroed out.
+
+    Returns:
+        Scalar objective function value.
+    """
+    return 0.5 * (np.linalg.norm(np.dot(D, theta)))**2
+
+def gradient(y: NDArray[np.float64],
+                    X: NDArray[np.float64],
+                    theta: NDArray[np.float64],
+                    gamma: float,
+                    D: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Compute the gradient of the regularized objective w.r.t. theta.
+
+    Gradient = -X^T (y * sigma(-y * X theta)) + gamma * D^T D theta,
+    where sigma is the sigmoid function.
+
+    Args:
+        y:     Label vector of shape (n,) with values in {-1, +1}.
+        X:     Feature matrix of shape (n, p).
+        theta: Parameter vector of shape (p,).
+        gamma: Regularization strength (non-negative scalar).
+        D:     Regularization matrix of shape (p, p).
+
+    Returns:
+        Gradient vector of shape (p,).
+    """
     z = y * np.dot(X, theta)
-    gradient = np.dot(-X.T, (y * expit(-z)))
-    penalty = gamma * np.dot(D, theta)
-    return gradient + penalty
-
-def find_optimal_theta(y,
-                       X,
-                       theta_start,
-                       gamma,
-                       D,
-                       step_size,
-                       stop_criterion,
-                       max_number_iterations,
-                       acceleration = None,
-                       accelerated = False):
-
-    theta = [theta_start.copy(), theta_start.copy()]
-    objective_function_values = []
-    steps = []
-
-    if accelerated:
-        for k in range(max_number_iterations):
-            steps.append(k)
-            grad = gradient_method(y, X, theta[-1], gamma, D)
-            theta.append(theta[-1] - step_size * grad + acceleration * (theta[-1] - theta[-2]))
-            objective_function_values.append(objective_function(y, X, theta[-1], gamma, D))
-
-            if np.linalg.norm(theta[-1] - theta[-2]) < stop_criterion:
-                break
-
+    grad = np.dot(-X.T, (y * expit(-z)))
+    if gamma == 0.0:
+        return grad
     else:
-        for k in range(max_number_iterations):
-            steps.append(k)
-            grad = gradient_method(y, X, theta[-1], gamma, D)
-            theta.append(theta[-1] - step_size * grad)
-            objective_function_values.append(objective_function(y, X, theta[-1], gamma, D))
+        penalty = gamma * np.dot(D, theta)
+        return grad + penalty
 
-            if np.linalg.norm(theta[-1] - theta[-2]) < stop_criterion:
-                break
+def gradient_method(y: NDArray[np.float64],
+                    X: NDArray[np.float64],
+                    theta_start = None,
+                    step_size = None,
+                    stop_criterion = 1e-04,
+                    max_number_iterations = 1000,
+                    acceleration: float = 0.0,
+                    gamma = 0.0) -> tuple[NDArray[np.float64], list[float], bool]:
+    """Run (accelerated) gradient descent to minimize the regularized objective.
 
+    Implements standard gradient descent when acceleration=0.0, or a
+    heavy-ball / momentum scheme for acceleration > 0.
 
-    return theta[1:], steps, objective_function_values
+    Args:
+        y:                      Label vector of shape (n,) with values in {-1, +1}.
+        X:                      Feature matrix of shape (n, p).
+        theta_start:            Initial parameter vector of shape (p,).
+        step_size:              Gradient descent step size. A stable choice is
+                                1 / L where L is the Lipschitz constant of the
+                                gradient.
+        stop_criterion:         Stop when ||theta_k - theta_{k-1}|| < this value.
+        max_number_iterations:  Maximum number of gradient steps.
+        acceleration:           Momentum coefficient (default 0.0 = no momentum).
+                                Typical values are in [0.5, 0.9].
+        gamma:                  Regularisation strength (non-negative scalar).
 
-def trade_off(y, X, theta, D):
-    nll = negative_likelihood(y, X, theta)
-    regularisation_term = 0.5 * np.linalg.norm(np.dot(D, theta))**2
+    Returns:
+        A tuple (theta_history, objective_values, converged) where:
+          - theta_history is a list of parameter vectors (one per iteration),
+          - objective_values is a list of objective function values,
+          - converged is True if the stop criterion was met, False if
+            max_number_iterations was reached.
+    """
+
+    if theta_start is None:
+        theta_start = np.zeros(X.shape[1])
+    if step_size is None:
+        step_size = 1 / (gamma + 0.25 * np.linalg.norm(X)**2)
+    current_theta = theta_start.copy()
+    prior_theta = theta_start.copy()
+    D = np.identity(X.shape[1])
+    D[-1][-1] = 0
+    objective_function_values = []
+    converged = False
+
+    for k in range(max_number_iterations):
+        grad = gradient(y, X, current_theta, gamma, D)
+        if k>=1:
+            dummy = current_theta
+            current_theta = current_theta - step_size * grad + acceleration * (current_theta - prior_theta)
+            prior_theta = dummy
+        else:
+            current_theta = current_theta - step_size * grad
+        objective_function = negative_log_likelihood(y, X, current_theta) + gamma * l2_regularization(current_theta, D)
+        objective_function_values.append(objective_function)
+
+        if np.linalg.norm(current_theta - prior_theta) < stop_criterion:
+            converged = True
+            break
+
+    return current_theta, objective_function_values, converged
+
+def trade_off(y: NDArray[np.float64],
+              X: NDArray[np.float64],
+              theta: NDArray[np.float64]) -> tuple[float, float]:
+    """Compute the NLL and regularization term separately for a trade-off curve.
+
+    Useful for plotting the Pareto frontier between data fit and regularization
+    across a range of gamma values.
+
+    Args:
+        y:     Label vector of shape (n,) with values in {-1, +1}.
+        X:     Feature matrix of shape (n, p).
+        theta: Parameter vector of shape (p,).
+
+    Returns:
+        A tuple (nll, regularization_term) of scalar floats.
+    """
+    D = np.identity(X.shape[1])
+    D[-1][-1] = 0
+    nll = negative_log_likelihood(y, X, theta)
+    regularisation_term = l2_regularization(theta, D)
     return nll, regularisation_term
-
-#import data
-X, y = sklearn.datasets.load_breast_cancer(return_X_y=True)
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
-y = 2 * y - 1
-
-#add bias to X vector
-X_tilde = np.zeros((X.shape[0], X.shape[1]+1))
-for i, x in enumerate(X):
-    x = np.append(x, 1)
-    X_tilde[i] = x
-
-#set variables
-gamma = 3
-D = np.identity(X_tilde.shape[1])
-D[-1][-1] = 0
-theta_start = np.zeros(X_tilde.shape[1])
-L = gamma + 0.25 * np.linalg.norm(X_tilde)**2
-
-step_size = 1/L
-stop_criterion = 1e-3
-max_number_iterations = 15000
-acceleration = 0.7
-
-#exercise 5
-theta, steps, ob_func_values = find_optimal_theta(y=y,
-                                  X=X_tilde,
-                                  theta_start=theta_start,
-                                  gamma=gamma,
-                                  D=D,
-                                  step_size=step_size,
-                                  stop_criterion=stop_criterion,
-                                  max_number_iterations=max_number_iterations,
-                                  acceleration=None,
-                                  accelerated=False)
-
-theta_acc, steps_acc, ob_func_values_acc = find_optimal_theta(y=y,
-                                  X=X_tilde,
-                                  theta_start=theta_start,
-                                  gamma=gamma,
-                                  D=D,
-                                  step_size=step_size,
-                                  stop_criterion=stop_criterion,
-                                  max_number_iterations=max_number_iterations,
-                                  acceleration=acceleration,
-                                  accelerated=True)
-
-#exercise 6
-gamma_values = np.logspace(-3, 3, 20)
-theta_values = [theta_start]
-trade_off_points = []
-
-for gamma_value in gamma_values:
-    L_constant = gamma_value + 0.25 * np.linalg.norm(X_tilde)**2
-    theta_values.append(find_optimal_theta(y=y,
-                                       X=X_tilde,
-                                       theta_start=theta_values[-1],
-                                       gamma=gamma_value,
-                                       D=D,
-                                       step_size=1/L_constant,
-                                       stop_criterion=stop_criterion,
-                                       max_number_iterations=max_number_iterations,
-                                       acceleration=acceleration,
-                                       accelerated=True)[0][-1])
-    trade_off_points.append(trade_off(y=y,
-                                      X=X_tilde,
-                                      theta=theta_values[-1],
-                                      D=D))
-
-nll, reg = zip(*trade_off_points)
-
-# plots
-plt.figure(1)
-plt.plot(steps, ob_func_values, label="not accelerated")
-plt.plot(steps_acc, ob_func_values_acc, label="accelerated")
-plt.yscale("log")
-plt.xlabel("steps")
-plt.ylabel("objective function values")
-plt.legend()
-plt.show()
-
-plt.figure(2)
-plt.scatter(nll[1:], reg[1:], label="trade-off curve")
-plt.yscale("log")
-plt.xscale("log")
-plt.xlabel("negative log likelihood")
-plt.ylabel("regularisation term")
-plt.legend()
-plt.show()
